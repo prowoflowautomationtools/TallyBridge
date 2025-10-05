@@ -31,7 +31,7 @@
         .header h1 { font-size: 2.5rem; color: var(--primary-blue); margin-bottom: 10px; }
         .header p { color: var(--text-secondary); font-size: 1.1rem; }
         .card { background: var(--card-bg); border-radius: 12px; padding: 24px; margin-bottom: 20px; border: 1px solid var(--border-color); box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
-        .btn { background: var(--primary-blue); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; display: inline-flex; align-items: center; gap: 8px; }
+        .btn { background: var(--primary-blue); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
         .btn:hover { background: var(--primary-blue-hover); transform: translateY(-1px); }
         .btn-success { background: var(--success-green); }
         .btn-warning { background: var(--warning-yellow); }
@@ -141,7 +141,20 @@
         .status-pending { background-color: rgba(245, 159, 11, 0.2); color: #F59E0B; }
         .upload-area { border: 2px dashed var(--border-color); border-radius: 8px; padding: 40px; text-align: center; background: var(--bg-secondary); transition: border-color 0.2s; cursor: pointer; }
         .upload-area:hover { border-color: var(--primary-blue); }
-        .pagination { display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 20px; }
+        .pagination { display: flex; justify-content: center; align-items: center; gap: 5px; }
+        .pagination-input {
+            width: 70px;
+            padding: 8px 10px;
+            text-align: center;
+            margin: 0 5px;
+            appearance: textfield;
+            -moz-appearance: textfield; /* Hide arrows in Firefox */
+        }
+        .pagination-input::-webkit-outer-spin-button,
+        .pagination-input::-webkit-inner-spin-button {
+            -webkit-appearance: none; /* Hide arrows in Chrome, Safari, Edge */
+            margin: 0;
+        }
         .step-indicator { display: flex; align-items: center; justify-content: center; margin-bottom: 20px; }
         .step { display: flex; flex-direction: column; align-items: center; color: var(--text-secondary); transition: color 0.3s ease; }
         .step.active { color: var(--primary-blue); }
@@ -863,7 +876,7 @@
                     dbOperations.getLedgersByBatch(batch.id)
                 ]);
                 setTransactions(txns);
-                setLedgers(lgrs);
+                setLedgers(lgrs.sort((a, b) => a.name.localeCompare(b.name)));
                 setLoading(false);
             };
 
@@ -912,6 +925,28 @@
                 setTransactions(currentTransactions => currentTransactions.filter(t => !idsToFinalise.includes(t.id)));
                 alert(`${idsToFinalise.length} transaction(s) moved to the Finalise page.`);
             };
+
+            const handleExportUncleared = () => {
+                const unclearedTransactions = transactions.filter(t => !t.mappedLedger);
+
+                if (unclearedTransactions.length === 0) {
+                    alert("No uncleared entries to export.");
+                    return;
+                }
+
+                const dataForExport = unclearedTransactions.map(txn => ({
+                    'Date': formatDateDDMMYYYY(txn.date),
+                    'Particulars': txn.particulars,
+                    'Debit': txn.debit > 0 ? txn.debit : null,
+                    'Credit': txn.credit > 0 ? txn.credit : null,
+                    'Voucher Type': txn.voucherType,
+                }));
+
+                const worksheet = XLSX.utils.json_to_sheet(dataForExport);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Uncleared Entries");
+                XLSX.writeFile(workbook, `Uncleared_Transactions_${batch.bankName || 'Export'}.xlsx`);
+            };
             
             const processedTransactions = useMemo(() => {
                 let filtered = [...transactions];
@@ -936,6 +971,11 @@
                 }
                 return filtered;
             }, [transactions, filters, sortConfig]);
+
+            // Automatically reset to page 1 when filters or sorting change
+            useEffect(() => {
+                setCurrentPage(1);
+            }, [processedTransactions]);
 
             const summaryStats = useMemo(() => {
                 const totalDebit = processedTransactions.reduce((sum, t) => sum + (t.debit || 0), 0);
@@ -996,12 +1036,13 @@
                     </div>
 
                     <div className="action-bar">
-                        <div style={{display: 'flex', gap: '10px'}}>
+                        <div style={{display: 'flex', gap: '10px', flexWrap: 'wrap'}}>
                             <button className="btn btn-primary" onClick={() => setIsCreateLedgerOpen(true)}>Create Ledger</button>
                             {selectedRows.size > 0 && (
                                 <button className="btn btn-warning" onClick={() => setIsBulkMapModalOpen(true)}>Bulk Map ({selectedRows.size})</button>
                             )}
                              <button className="btn btn-secondary" onClick={() => setFilters(initialFilters)}>Clear Filters</button>
+                             <button className="btn btn-secondary" onClick={handleExportUncleared}>Export Uncleared Entries</button>
                         </div>
                         <Pagination currentPage={currentPage} totalPages={Math.ceil(processedTransactions.length / ITEMS_PER_PAGE)} onPageChange={setCurrentPage} />
                         <div style={{display: 'flex', gap: '10px'}}>
@@ -1099,7 +1140,7 @@
                     narration: txn.particulars
                 }));
                 setFinalisedTransactions(transformed);
-                setLedgers(lgrs);
+                setLedgers(lgrs.sort((a, b) => a.name.localeCompare(b.name)));
             };
 
             useEffect(() => { loadFinalisedData(); }, [batch]);
@@ -1108,7 +1149,7 @@
 
             const handlePushBack = async () => {
                 if (selectedTransactions.size === 0) return;
-                await dbOperations.updateMultipleTransactions(Array.from(selectedTransactions), { status: 'pending' });
+                await dbOperations.updateMultipleTransactions(Array.from(selectedTransactions), { status: 'pending', mappedLedger: null });
                 await dbOperations.updateBatch(batch.id, { lastModified: new Date().toISOString() });
                 loadFinalisedData();
                 setSelectedTransactions(new Set());
@@ -1140,6 +1181,11 @@
                 return filtered;
             }, [finalisedTransactions, filters]);
             
+            // Automatically reset to page 1 when filters change
+            useEffect(() => {
+                setCurrentPage(1);
+            }, [processedTransactions]);
+
             const summaryStats = useMemo(() => {
                 const totalDebit = processedTransactions
                     .filter(t => t.voucherType === 'Payment')
@@ -1204,11 +1250,15 @@
                     </div>
 
                     <div className="action-bar">
-                        <button className="btn btn-warning" onClick={handlePushBack} disabled={selectedTransactions.size === 0}>Push Back to Clearing ({selectedTransactions.size})</button>
-                        <button className="btn btn-secondary" onClick={() => setFilters(initialFilters)}>Clear Filters</button>
+                        <div style={{display: 'flex', gap: '10px'}}>
+                            <button className="btn btn-warning" onClick={handlePushBack} disabled={selectedTransactions.size === 0}>Push Back to Clearing ({selectedTransactions.size})</button>
+                            <button className="btn btn-secondary" onClick={() => setFilters(initialFilters)}>Clear Filters</button>
+                        </div>
                         <Pagination currentPage={currentPage} totalPages={Math.ceil(processedTransactions.length / ITEMS_PER_PAGE)} onPageChange={setCurrentPage} />
-                        <button className="btn btn-success" onClick={generateMastersXML}>Generate Masters.xml</button>
-                        <button className="btn btn-success" onClick={generateVouchersXML}>Generate Vouchers.xml</button>
+                        <div style={{display: 'flex', gap: '10px'}}>
+                            <button className="btn btn-success" onClick={generateMastersXML}>Generate Masters.xml</button>
+                            <button className="btn btn-success" onClick={generateVouchersXML}>Generate Vouchers.xml</button>
+                        </div>
                     </div>
                     <div className="table-container">
                         <table className="table">
@@ -1280,12 +1330,48 @@
         }
 
         function Pagination({ currentPage, totalPages, onPageChange }) {
+            const [inputValue, setInputValue] = useState(currentPage);
+
+            useEffect(() => {
+                setInputValue(currentPage);
+            }, [currentPage]);
+
+            const handleInputChange = (e) => {
+                setInputValue(e.target.value);
+            };
+
+            const handlePageJump = (e) => {
+                if (e.key === 'Enter' || e.type === 'blur') {
+                    const pageNum = parseInt(inputValue, 10);
+                    if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= totalPages) {
+                        onPageChange(pageNum);
+                    } else {
+                        setInputValue(currentPage); // Reset to current page if input is invalid
+                    }
+                }
+            };
+
             if (totalPages <= 1) return null;
+
             return (
                 <div className="pagination">
-                    <button className="btn btn-secondary" onClick={() => onPageChange(p => Math.max(1, p - 1))} disabled={currentPage === 1}>Previous</button>
-                    <span style={{padding: '0 15px'}}>Page {currentPage} of {totalPages}</span>
-                    <button className="btn btn-secondary" onClick={() => onPageChange(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>Next</button>
+                    <button className="btn btn-secondary" onClick={() => onPageChange(currentPage - 1)} disabled={currentPage === 1}>&lt;</button>
+                    <span style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center' }}>
+                        Page
+                        <input
+                            type="number"
+                            value={inputValue}
+                            onChange={handleInputChange}
+                            onKeyDown={handlePageJump}
+                            onBlur={handlePageJump}
+                            className="input pagination-input"
+                            min="1"
+                            max={totalPages}
+                            step="1"
+                        />
+                        of {totalPages}
+                    </span>
+                    <button className="btn btn-secondary" onClick={() => onPageChange(currentPage + 1)} disabled={currentPage === totalPages}>&gt;</button>
                 </div>
             );
         }
