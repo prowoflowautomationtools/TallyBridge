@@ -419,14 +419,41 @@
         };
         
         const generateXML = (type, data) => {
-            let header = '<?xml version="1.0" encoding="UTF-8"?>\n<ENVELOPE>\n  <HEADER>\n    <TALLYREQUEST>Import Data</TALLYREQUEST>\n  </HEADER>\n  <BODY>\n    <IMPORTDATA>\n      <REQUESTDESC>\n';
+            let header = '<?xml version="1.0" ?>\n<ENVELOPE>\n  <HEADER>\n    <TALLYREQUEST>Import Data</TALLYREQUEST>\n  </HEADER>\n  <BODY>\n    <IMPORTDATA>\n      <REQUESTDESC>\n';
             let footer = '      </REQUESTDATA>\n    </IMPORTDATA>\n  </BODY>\n</ENVELOPE>';
             let body = '';
 
             if (type === 'masters') {
-                header += '        <REPORTNAME>All Masters</REPORTNAME>\n      </REQUESTDESC>\n      <REQUESTDATA>\n';
+                header += '        <REPORTNAME>All Masters</REPORTNAME>\n        <STATICVARIABLES>\n          <SVCURRENTCOMPANY/>\n        </STATICVARIABLES>\n      </REQUESTDESC>\n      <REQUESTDATA>\n';
+                
                 data.forEach(ledger => {
-                    body += `        <TALLYMESSAGE xmlns:UDF="TallyUDF">\n          <LEDGER NAME="${ledger.name}" RESERVEDNAME="">\n            <ASORIGINAL>Yes</ASORIGINAL>\n            <PARENT>${ledger.group}</PARENT>\n            <OPENINGBALANCE>${ledger.drCr === 'Dr' ? '' : '-'}${ledger.openingBalance}</OPENINGBALANCE>\n            <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>\n          </LEDGER>\n        </TALLYMESSAGE>\n`;
+                    const ledgerName = escapeXML(ledger.name);
+                    const ledgerGroup = escapeXML(ledger.group);
+
+                    // Use the explicit drCr selection from the form
+                    const balanceType = ledger.drCr === 'Cr' ? 'CR' : 'DR';
+                    const balanceAmount = Math.abs(ledger.openingBalance || 0);
+                    
+                    // For opening balance, use negative for DR (assets/expenses) as per Tally convention
+                    const displayBalance = balanceType === 'DR' ? -balanceAmount : balanceAmount;
+                    
+                    // Determine ISDEEMEDPOSITIVE based on balance type
+                    // DR balances (assets/expenses) should have ISDEEMEDPOSITIVE = No
+                    // CR balances (liabilities/income) should have ISDEEMEDPOSITIVE = Yes
+                    const isDeemedPositive = balanceType === 'CR' ? 'Yes' : 'No';
+
+                    body += `        <TALLYMESSAGE xmlns:UDF="TallyUDF">\n` +
+                            `          <LEDGER NAME="${ledgerName}" ACTION="Create">\n` +
+                            `            <NAME.LIST>\n` +
+                            `              <NAME>${ledgerName}</NAME>\n` +
+                            `            </NAME.LIST>\n` +
+                            `            <PARENT>${ledgerGroup}</PARENT>\n` +
+                            `            <OPENINGBALANCE TYPE="${balanceType}">${displayBalance}</OPENINGBALANCE>\n` +
+                            `            <ISDEEMEDPOSITIVE>${isDeemedPositive}</ISDEEMEDPOSITIVE>\n` +
+                            `            <ISCOSTCENTREON>No</ISCOSTCENTREON>\n` +
+                            `            <AFFECTSSTOCK>No</AFFECTSSTOCK>\n` +
+                            `          </LEDGER>\n` +
+                            `        </TALLYMESSAGE>\n`;
                 });
             } else if (type === 'vouchers') {
                 header += '        <REPORTNAME>Vouchers</REPORTNAME>\n        <STATICVARIABLES>\n          <SVCURRENTCOMPANY></SVCURRENTCOMPANY>\n        </STATICVARIABLES>\n      </REQUESTDESC>\n      <REQUESTDATA>\n';
@@ -447,6 +474,19 @@
             link.download = filename;
             link.click();
             URL.revokeObjectURL(url);
+        };
+
+        const escapeXML = (str) => {
+            if (typeof str !== 'string') return '';
+            return str.replace(/[<>&"']/g, (c) => {
+                switch (c) {
+                    case '<': return '&lt;';
+                    case '>': return '&gt;';
+                    case '&': return '&amp;';
+                    case '"': return '&quot;';
+                    case "'": return '&apos;';
+                }
+            });
         };
 
         function CompanyNameModal({ onSave, onClose, companyName, setCompanyName }) {
